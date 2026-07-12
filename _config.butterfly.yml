@@ -1,0 +1,149 @@
+# ===========================
+# Butterfly Theme Configuration
+# ===========================
+
+# Navigation bar
+nav:
+  logo:
+  display_title: true
+  # Fixed navigation bar
+  fixed: true
+
+# Menu
+menu:
+  首页: / || fas fa-home
+  文章归档: /archives/ || fas fa-archive
+  标签: /tags/ || fas fa-tags
+  分类: /categories/ || fas fa-folder-open
+  作品集: /portfolio/ || fas fa-code
+  关于我: /about/ || fas fa-user
+
+# Code blocks
+highlight_theme: mac light
+highlight_copy: true
+highlight_lang: true
+highlight_shrink: false
+
+# Social links
+social:
+  fas fa-envelope: mailto:youbing@example.com || Email
+  fab fa-github: https://github.com/youbing-dev || Github
+  fab fa-linkedin: https://linkedin.com/in/youbing || Linkedin
+
+# Avatar
+avatar:
+  img: https://api.dicebear.com/7.x/initials/svg?seed=YouBing&backgroundColor=3ECF8E&textColor=ffffff
+  effect: false
+
+# Site info in sidebar
+site_meta:
+  description: Java 后端开发者 | 专注高并发与分布式系统
+  author: 游冰
+
+# Dark mode
+# 0 = always light, 1 = always dark, 2 = follow system
+darkmode:
+  enable: true
+  # Default display: dark mode
+  display: [0, 1]
+
+# Right side panel
+rightside_display_order:
+  - darkmode_button
+  - hide-aside-btn
+  - readmode
+  - font-adjustment
+  - translate-link
+
+# Footer settings
+footer:
+  owner:
+    enable: true
+    since: 2023
+  custom_text:
+    - 游冰 | Java 后端开发者
+    - 用技术写作把复杂问题讲清楚
+  copyright: true
+
+# Post page
+post_meta:
+  page:
+    date_type: created
+    date_format: YYYY-MM-DD
+    categories: true
+    tags: true
+    label: true
+  post:
+    date_type: both
+    date_format: YYYY-MM-DD
+    categories: true
+    tags: true
+    label: true
+    wordcount: true
+    min2read: true
+
+# Post copyright
+post_copyright:
+  enable: true
+  decode: false
+  author_href: https://youbing-dev.github.io
+  license: CC BY-NC-SA 4.0
+  license_url: https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+# Related articles
+related_post:
+  enable: true
+  limit: 3
+  date_type: created
+
+# Anchor
+anchor:
+  auto_update: true
+
+# Comments (disabled for now, can enable later)
+comments:
+  updata_time: false
+  service:
+  lazyload: false
+
+# Search
+local_search:
+  enable: true
+  preload: true
+  CDN:
+
+# Analytics (can add later)
+# baidu_analytics:
+# google_analytics:
+
+# Font
+font:
+  global-font-size: 16px
+  code-font-size: 14px
+  font-family: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Lato, Roboto, "PingFang SC", "Microsoft JhengHei", "Microsoft YaHei", sans-serif'
+  code-font-family: 'JetBrains Mono, consolas, Menlo, "PingFang SC", "Microsoft JhengHei", "Microsoft YaHei", sans-serif'
+
+# Background
+background:
+
+# Page loading animation
+preloader:
+  enable: true
+  source: default
+  pace_css_colour: '#3ECF8E'
+
+# Scroll settings
+scroll:
+  percent: true
+
+# Beautify
+beautify:
+  enable: true
+  field: post
+  title-prefix-icon: '\f0c1'
+  title-prefix-icon-color: '#3ECF8E'
+
+# Theme color
+theme_color:
+  light: '#3ECF8E'
+  dark: '#3ECF8E'
