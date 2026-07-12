@@ -1,0 +1,221 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>用 Redis + Lua 实现分布式限流的四种方案对比 | 游冰 | Java 后端开发者</title><meta name="author" content="游冰"><meta name="copyright" content="游冰"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#ffffff"><meta name="description" content="对比了固定窗口、滑动窗口、漏桶和令牌桶四种限流算法在 Redis + Lua 下的实现，附带各方案的 QPS 压测结果。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="用 Redis + Lua 实现分布式限流的四种方案对比">
+<meta property="og:url" content="https://youbing-dev.github.io/2026/06/10/redis-lua-rate-limiting/index.html">
+<meta property="og:site_name" content="游冰 | Java 后端开发者">
+<meta property="og:description" content="对比了固定窗口、滑动窗口、漏桶和令牌桶四种限流算法在 Redis + Lua 下的实现，附带各方案的 QPS 压测结果。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://api.dicebear.com/7.x/initials/svg?seed=YouBing&backgroundColor=3ECF8E&textColor=ffffff">
+<meta property="article:published_time" content="2026-06-10T02:00:00.000Z">
+<meta property="article:modified_time" content="2026-07-12T15:08:31.236Z">
+<meta property="article:author" content="游冰">
+<meta property="article:tag" content="Lua">
+<meta property="article:tag" content="Redis">
+<meta property="article:tag" content="分布式系统">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://api.dicebear.com/7.x/initials/svg?seed=YouBing&backgroundColor=3ECF8E&textColor=ffffff"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "用 Redis + Lua 实现分布式限流的四种方案对比",
+  "url": "https://youbing-dev.github.io/2026/06/10/redis-lua-rate-limiting/",
+  "image": "https://api.dicebear.com/7.x/initials/svg?seed=YouBing&backgroundColor=3ECF8E&textColor=ffffff",
+  "datePublished": "2026-06-10T02:00:00.000Z",
+  "dateModified": "2026-07-12T15:08:31.236Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "游冰",
+      "url": "https://youbing-dev.github.io"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://youbing-dev.github.io/2026/06/10/redis-lua-rate-limiting/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.5"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.2.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: true,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '用 Redis + Lua 实现分布式限流的四种方案对比',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta name="generator" content="Hexo 8.1.2"></head><body><script>window.paceOptions = {
+  restartOnPushState: false
+}
+
+btf.addGlobalFn('pjaxSend', () => {
+  Pace.restart()
+}, 'pace_restart')
+
+</script><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pace-js@1.2.4/themes/blue/pace-theme-minimal.min.css"/><script src="https://cdn.jsdelivr.net/npm/pace-js@1.2.4/pace.min.js"></script><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="https://api.dicebear.com/7.x/initials/svg?seed=YouBing&amp;backgroundColor=3ECF8E&amp;textColor=ffffff" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">4</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">12</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">5</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章归档</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div><div class="menus_item"><a class="site-page" href="/portfolio/"><i class="fa-fw fas fa-code"></i><span> 作品集</span></a></div><div class="menus_item"><a class="site-page" href="/about/"><i class="fa-fw fas fa-user"></i><span> 关于我</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">游冰 | Java 后端开发者</span></a><a class="nav-page-title" href="/"><span class="site-name">用 Redis + Lua 实现分布式限流的四种方案对比</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 文章归档</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div><div class="menus_item"><a class="site-page" href="/portfolio/"><i class="fa-fw fas fa-code"></i><span> 作品集</span></a></div><div class="menus_item"><a class="site-page" href="/about/"><i class="fa-fw fas fa-user"></i><span> 关于我</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">用 Redis + Lua 实现分布式限流的四种方案对比</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-06-10T02:00:00.000Z" title="发表于 2026-06-10 10:00:00">2026-06-10</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-07-12T15:08:31.236Z" title="更新于 2026-07-12 23:08:31">2026-07-12</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E5%90%8E%E7%AB%AF%E5%BC%80%E5%8F%91/">后端开发</a><i class="fas fa-angle-right post-meta-separator"></i><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E5%90%8E%E7%AB%AF%E5%BC%80%E5%8F%91/%E5%88%86%E5%B8%83%E5%BC%8F%E7%B3%BB%E7%BB%9F/">分布式系统</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h2 id="为什么需要分布式限流"><a href="#为什么需要分布式限流" class="headerlink" title="为什么需要分布式限流"></a>为什么需要分布式限流</h2><p>单机限流在分布式部署下会失效——假设你有 10 个节点，每个节点限 100 QPS，实际总限流就是 1000 QPS，而且无法做到全局精确控制。分布式限流通过 Redis 做集中计数，解决这个问题。</p>
+<h2 id="四种方案"><a href="#四种方案" class="headerlink" title="四种方案"></a>四种方案</h2><h3 id="固定窗口"><a href="#固定窗口" class="headerlink" title="固定窗口"></a>固定窗口</h3><p>最简单的实现，按固定时间窗口（如 1 分钟）计数：</p>
+<figure class="highlight lua"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">local</span> key = KEYS[<span class="number">1</span>]</span><br><span class="line"><span class="keyword">local</span> limit = <span class="built_in">tonumber</span>(ARGV[<span class="number">1</span>])</span><br><span class="line"><span class="keyword">local</span> window = <span class="built_in">tonumber</span>(ARGV[<span class="number">2</span>])</span><br><span class="line"><span class="keyword">local</span> current = redis.call(<span class="string">&#x27;INCR&#x27;</span>, key)</span><br><span class="line"><span class="keyword">if</span> current == <span class="number">1</span> <span class="keyword">then</span></span><br><span class="line">    redis.call(<span class="string">&#x27;EXPIRE&#x27;</span>, key, window)</span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"><span class="keyword">return</span> current &lt;= limit <span class="keyword">and</span> <span class="number">1</span> <span class="keyword">or</span> <span class="number">0</span></span><br></pre></td></tr></table></figure>
+
+<p><strong>优点</strong>：实现简单，性能高。<br><strong>缺点</strong>：窗口边界处可能出现 2 倍突发流量。</p>
+<h3 id="滑动窗口"><a href="#滑动窗口" class="headerlink" title="滑动窗口"></a>滑动窗口</h3><p>通过 Redis 的 ZSET 实现更精确的滑动窗口：</p>
+<figure class="highlight lua"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">local</span> key = KEYS[<span class="number">1</span>]</span><br><span class="line"><span class="keyword">local</span> limit = <span class="built_in">tonumber</span>(ARGV[<span class="number">1</span>])</span><br><span class="line"><span class="keyword">local</span> window = <span class="built_in">tonumber</span>(ARGV[<span class="number">2</span>])</span><br><span class="line"><span class="keyword">local</span> now = <span class="built_in">tonumber</span>(ARGV[<span class="number">3</span>])</span><br><span class="line">redis.call(<span class="string">&#x27;ZREMRANGEBYSCORE&#x27;</span>, key, <span class="number">0</span>, now - window)</span><br><span class="line"><span class="keyword">local</span> count = redis.call(<span class="string">&#x27;ZCARD&#x27;</span>, key)</span><br><span class="line"><span class="keyword">if</span> count &lt; limit <span class="keyword">then</span></span><br><span class="line">    redis.call(<span class="string">&#x27;ZADD&#x27;</span>, key, now, now .. <span class="built_in">math</span>.<span class="built_in">random</span>())</span><br><span class="line">    redis.call(<span class="string">&#x27;EXPIRE&#x27;</span>, key, window / <span class="number">1000</span>)</span><br><span class="line">    <span class="keyword">return</span> <span class="number">1</span></span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"><span class="keyword">return</span> <span class="number">0</span></span><br></pre></td></tr></table></figure>
+
+<h3 id="漏桶-令牌桶"><a href="#漏桶-令牌桶" class="headerlink" title="漏桶 &amp; 令牌桶"></a>漏桶 &amp; 令牌桶</h3><p>漏桶平滑输出，令牌桶允许一定突发。两者都用 Redis 存储令牌&#x2F;水位状态，通过 Lua 脚本原子操作。</p>
+<h2 id="压测对比"><a href="#压测对比" class="headerlink" title="压测对比"></a>压测对比</h2><table>
+<thead>
+<tr>
+<th>方案</th>
+<th>精度</th>
+<th>突发控制</th>
+<th>实现复杂度</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>固定窗口</td>
+<td>低</td>
+<td>差</td>
+<td>简单</td>
+<td>非关键接口</td>
+</tr>
+<tr>
+<td>滑动窗口</td>
+<td>高</td>
+<td>好</td>
+<td>中等</td>
+<td>API 网关</td>
+</tr>
+<tr>
+<td>漏桶</td>
+<td>最高</td>
+<td>最好</td>
+<td>较复杂</td>
+<td>下游保护</td>
+</tr>
+<tr>
+<td>令牌桶</td>
+<td>高</td>
+<td>允许突发</td>
+<td>较复杂</td>
+<td>用户体验优先</td>
+</tr>
+</tbody></table>
+<h2 id="我的选择"><a href="#我的选择" class="headerlink" title="我的选择"></a>我的选择</h2><p>生产环境中我用了<strong>滑动窗口</strong>作为 API 网关的默认限流策略，对下游数据库服务则额外加了<strong>令牌桶</strong>保护。两者组合既保证了精确性，又防止了突发流量击穿下游。</p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a href="https://youbing-dev.github.io">游冰</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://youbing-dev.github.io/2026/06/10/redis-lua-rate-limiting/">https://youbing-dev.github.io/2026/06/10/redis-lua-rate-limiting/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://youbing-dev.github.io" target="_blank">游冰 | Java 后端开发者</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Redis/">Redis</a><a class="post-meta__tags" href="/tags/Lua/">Lua</a><a class="post-meta__tags" href="/tags/%E5%88%86%E5%B8%83%E5%BC%8F%E7%B3%BB%E7%BB%9F/">分布式系统</a></div><div class="post-share"><div class="social-share" data-image="https://api.dicebear.com/7.x/initials/svg?seed=YouBing&amp;backgroundColor=3ECF8E&amp;textColor=ffffff" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/06/28/virtual-thread-migration/" title="Spring Boot 3 虚拟线程实战：从 Thread Pool 到 Virtual Thread 的迁移记录"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">Spring Boot 3 虚拟线程实战：从 Thread Pool 到 Virtual Thread 的迁移记录</div></div><div class="info-2"><div class="info-item-1">背景我们的核心订单服务一直使用传统的 Tomcat 线程池模型，在高并发场景下经常出现线程饥饿和响应延迟飙升的问题。Java 21 引入的虚拟线程（Virtual Threads）承诺能以极低的资源开销支撑百万级并发，我决定在一个非关键链路上先做试点。 迁移步骤1. 升级 Spring Boot 到 3.2+Spring Boot 3.2 原生支持虚拟线程，只需要在配置文件中开启： 1234spring:  threads:    virtual:      enabled: true  2. 替换自定义线程池原来的 ThreadPoolTaskExecutor 全部替换为虚拟线程执行器： 1234@Beanpublic Executor taskExecutor() &#123;    return Executors.newVirtualThreadPerTaskExecutor();&#125;  3. 处理 synchronized 和 ThreadLocal虚拟线程不适合 synchronized 块和 ThreadLocal 重度使用的场景，需要逐一排查替换：  sy...</div></div></div></a><a class="pagination-related" href="/2026/05/18/postgresql-slow-query/" title="PostgreSQL 慢查询优化：从 12s 到 50ms 的排查过程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">PostgreSQL 慢查询优化：从 12s 到 50ms 的排查过程</div></div><div class="info-2"><div class="info-item-1">问题现象线上收到告警：订单统计报表接口响应时间超过 12 秒。这个接口每天被运营团队使用，12 秒的等待严重影响了工作效率。 排查过程第一步：EXPLAIN ANALYZE1234567EXPLAIN ANALYZESELECT o.id, o.order_no, o.amount, u.nameFROM orders oLEFT JOIN users u ON o.user_id = u.idWHERE o.created_at &gt;= &#x27;2026-01-01&#x27;ORDER BY o.created_at DESCLIMIT 50;  结果发现 Seq Scan on orders，全表扫描了 800 万行。 第二步：检查索引created_at 列上居然没有索引！之前的 DBA 离职后，这个索引从未被创建。 1CREATE INDEX idx_orders_created_at ON orders(created_at DESC);  加索引后从 12s 降到 800ms，但还是不够快。 第三步：查询重写原来的 LEFT JOIN 其实不需要——报表只需...</div></div></div></a></nav></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="https://api.dicebear.com/7.x/initials/svg?seed=YouBing&amp;backgroundColor=3ECF8E&amp;textColor=ffffff" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">游冰</div><div class="author-info-description">Java 后端开发者的技术博客，分享微服务架构、性能优化和分布式系统的实战经验。</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">4</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">12</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">5</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/xxxxxx"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="mailto:youbing@example.com" target="_blank" title="Email"><i class="fas fa-envelope"></i></a><a class="social-icon" href="https://github.com/youbing-dev" target="_blank" title="Github"><i class="fab fa-github"></i></a><a class="social-icon" href="https://linkedin.com/in/youbing" target="_blank" title="Linkedin"><i class="fab fa-linkedin"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">This is my Blog</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E9%9C%80%E8%A6%81%E5%88%86%E5%B8%83%E5%BC%8F%E9%99%90%E6%B5%81"><span class="toc-number">1.</span> <span class="toc-text">为什么需要分布式限流</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E7%A7%8D%E6%96%B9%E6%A1%88"><span class="toc-number">2.</span> <span class="toc-text">四种方案</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%9B%BA%E5%AE%9A%E7%AA%97%E5%8F%A3"><span class="toc-number">2.1.</span> <span class="toc-text">固定窗口</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%BB%91%E5%8A%A8%E7%AA%97%E5%8F%A3"><span class="toc-number">2.2.</span> <span class="toc-text">滑动窗口</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%BC%8F%E6%A1%B6-%E4%BB%A4%E7%89%8C%E6%A1%B6"><span class="toc-number">2.3.</span> <span class="toc-text">漏桶 &amp; 令牌桶</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%8E%8B%E6%B5%8B%E5%AF%B9%E6%AF%94"><span class="toc-number">3.</span> <span class="toc-text">压测对比</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%88%91%E7%9A%84%E9%80%89%E6%8B%A9"><span class="toc-number">4.</span> <span class="toc-text">我的选择</span></a></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/28/virtual-thread-migration/" title="Spring Boot 3 虚拟线程实战：从 Thread Pool 到 Virtual Thread 的迁移记录">Spring Boot 3 虚拟线程实战：从 Thread Pool 到 Virtual Thread 的迁移记录</a><time datetime="2026-06-28T02:00:00.000Z" title="发表于 2026-06-28 10:00:00">2026-06-28</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/10/redis-lua-rate-limiting/" title="用 Redis + Lua 实现分布式限流的四种方案对比">用 Redis + Lua 实现分布式限流的四种方案对比</a><time datetime="2026-06-10T02:00:00.000Z" title="发表于 2026-06-10 10:00:00">2026-06-10</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/18/postgresql-slow-query/" title="PostgreSQL 慢查询优化：从 12s 到 50ms 的排查过程">PostgreSQL 慢查询优化：从 12s 到 50ms 的排查过程</a><time datetime="2026-05-18T02:00:00.000Z" title="发表于 2026-05-18 10:00:00">2026-05-18</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/04/22/fastapi-internal-tools/" title="Python 脚本自动化：我用 FastAPI 搭建了一个内部工具平台">Python 脚本自动化：我用 FastAPI 搭建了一个内部工具平台</a><time datetime="2026-04-22T02:00:00.000Z" title="发表于 2026-04-22 10:00:00">2026-04-22</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2023 - 2026 By 游冰</span></div><div class="footer_custom_text">游冰 | Java 后端开发者,用技术写作把复杂问题讲清楚</div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.5"></script><script src="/js/main.js?v=5.5.5"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>
